@@ -1,0 +1,35 @@
+[build-system]
+requires = ["scikit-build-core>=0.5", "pybind11"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "azeotrope-apc"
+version = "0.1.0"
+description = "Open-Source Advanced Process Control (MPC) Platform"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Nazmul Hasan"},
+]
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+    "matplotlib>=3.5",
+    "h5py>=3.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+opcua = ["asyncua>=1.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
+builder = [
+    "PySide6>=6.5",
+    "plotly>=5.0",
+]
+
+[tool.scikit-build]
+cmake.build-type = "Release"
