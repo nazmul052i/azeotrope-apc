@@ -15,6 +15,21 @@
 
 namespace azeoapc {
 
+// Forward declaration (defined below, before MPCController uses it)
+struct ControllerStatus {
+    std::string name;
+    ControllerMode mode;
+    bool is_running;
+    int64_t cycle_count;
+    double last_solve_time_ms;
+    SolverStatus last_layer1_status;
+    SolverStatus last_layer2_status;
+    int active_cvs;
+    int active_mvs;
+    int total_cvs;
+    int total_mvs;
+};
+
 /**
  * MPC Controller: Three-Layer Orchestrator
  *
@@ -102,6 +117,13 @@ public:
     void setMVRateLimit(int mv_idx, double rate);
     void setCVWeight(int cv_idx, double weight);
     void setMVWeight(int mv_idx, double weight);
+    void setCVConcern(int cv_idx, double concern_lo, double concern_hi);
+    void setCVRank(int cv_idx, int rank_lo, int rank_hi);
+    void setMVCostRank(int mv_idx, int rank);
+    void setMVCost(int mv_idx, double cost);
+
+    /// Update Layer 2 gain matrix (called by Layer 3 RTO after re-linearization)
+    void updateGainMatrix(const Eigen::MatrixXd& G);
     void enableMV(int mv_idx, bool enabled);
     void enableCV(int cv_idx, bool enabled);
     void setMode(ControllerMode mode);
@@ -144,23 +166,6 @@ private:
                   const Eigen::VectorXd& u_current,
                   const Eigen::VectorXd& dv_values,
                   const ControlOutput& output);
-};
-
-// ============================================================================
-// Controller status (for monitoring)
-// ============================================================================
-struct ControllerStatus {
-    std::string name;
-    ControllerMode mode;
-    bool is_running;
-    int64_t cycle_count;
-    double last_solve_time_ms;
-    SolverStatus last_layer1_status;
-    SolverStatus last_layer2_status;
-    int active_cvs;
-    int active_mvs;
-    int total_cvs;
-    int total_mvs;
 };
 
 }  // namespace azeoapc

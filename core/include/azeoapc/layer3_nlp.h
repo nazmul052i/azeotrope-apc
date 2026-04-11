@@ -3,6 +3,7 @@
 #include <Eigen/Dense>
 #include <string>
 #include <memory>
+#include <functional>
 #include "azeoapc/types.h"
 
 #ifdef AZEOAPC_HAS_CASADI
@@ -68,6 +69,11 @@ public:
         const Eigen::VectorXd& u_current,       // current MVs
         const Eigen::VectorXd& parameters = {}  // model parameters
     );
+
+    /// Set discrete model function x_next = f(x, u) for numerical linearization
+    /// This enables linearizeAt() without CasADi
+    void setModelFunction(
+        std::function<Eigen::VectorXd(const Eigen::VectorXd&, const Eigen::VectorXd&)> fn);
 
     /// Re-linearize nonlinear model at operating point
     /// Returns (A,B,C,D) for updating Layer 2 gain matrix

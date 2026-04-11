@@ -10,4 +10,4 @@ if(NOT pybind11_FOUND)
 endif()
 
 pybind11_add_module(_azeoapc_core pybind_opendmc.cpp)
-target_link_libraries(_azeoapc_core PRIVATE azeoapc::azeoapc)
+target_link_libraries(_azeoapc_core PRIVATE azeoapc::azeoapc spdlog::spdlog)

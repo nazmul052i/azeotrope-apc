@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake --build build --config Release --target cstr_closed_loop)",
+      "Bash(build/examples/Release/cstr_closed_loop.exe)",
+      "Bash(cmake -B build -DAZEOAPC_BUILD_EXAMPLES=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5)",
+      "Bash(cmake -B build -DCMAKE_BUILD_TYPE=Release -DAZEOAPC_BUILD_BINDINGS=ON -DAZEOAPC_BUILD_EXAMPLES=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5)"
+    ]
+  }
+}

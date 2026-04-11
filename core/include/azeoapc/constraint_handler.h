@@ -8,37 +8,53 @@
 namespace azeoapc {
 
 /**
- * Constraint Handler
+ * Constraint Handler with DMC3-style concerns and ranks.
  *
- * Implements prioritized constraint management for industrial MPC.
+ * Hard constraints (always enforced):
+ *   - MV bounds [u_min, u_max]
+ *   - MV rate limits [du_min, du_max]
  *
- * Priority levels:
- *   P1 (highest): MV hard limits (valve range)       -- NEVER relaxed
- *   P2:           MV rate-of-change limits            -- Relaxed only if P1 infeasible
- *   P3:           CV safety limits                    -- Relaxed after P1-P2
- *   P4:           CV operating limits                 -- Relaxed after P1-P3
- *   P5 (lowest):  CV setpoint tracking                -- Always soft (in objective)
+ * Soft constraints (enforced via slack variables in objective):
+ *   - CV operating limits [y_oper_lo, y_oper_hi]
+ *     - Penalty cost: cv_concern_lo[i]^2 * s_lo[i]^2 (and similar for hi)
+ *     - Higher concern -> harder constraint (less violation)
+ *     - Lower concern -> softer constraint (more violation tolerated)
+ *   - CV safety limits [y_safety_lo, y_safety_hi]
+ *     - Tighter than operating, used when operating relaxed
  *
- * When constraints make the QP infeasible, lower-priority constraints
- * are sequentially relaxed until a feasible solution is found.
+ * Per-CV rank (cv_lo_rank, cv_hi_rank):
+ *   - Used for sequential constraint relaxation in Layer 2 LP
+ *   - Lower rank value = relaxed first
+ *
+ * Per-MV cost rank (mv_cost_rank):
+ *   - Tie-breaker for Layer 2 LP economic optimization
+ *   - Higher rank = higher priority for hitting bound
  */
 class ConstraintHandler {
 public:
     ConstraintHandler(int nu, int ny, int M, int P);
 
-    // ---- Set constraints ----
+    // ---- Set hard constraints ----
 
-    /// P1: MV absolute bounds [nu]
     void setMVBounds(const Eigen::VectorXd& lb, const Eigen::VectorXd& ub);
-
-    /// P2: MV rate-of-change bounds [nu] (max |du| per step)
     void setMVRateBounds(const Eigen::VectorXd& du_lb, const Eigen::VectorXd& du_ub);
-
-    /// P3: CV safety bounds [ny]
     void setCVSafetyBounds(const Eigen::VectorXd& lb, const Eigen::VectorXd& ub);
-
-    /// P4: CV operating bounds [ny]
     void setCVOperatingBounds(const Eigen::VectorXd& lb, const Eigen::VectorXd& ub);
+
+    // ---- DMC3-style soft constraint tuning ----
+
+    /// Set CV concern values [ny]. Penalty cost = concern^2 per unit slack.
+    /// Default = 1.0 (moderate softness). Use 100+ for "near-hard" constraints.
+    void setCVConcerns(const Eigen::VectorXd& concern_lo,
+                       const Eigen::VectorXd& concern_hi);
+
+    /// Set per-CV rank for relaxation order [ny].
+    /// Lower rank value = relaxed first when infeasible.
+    void setCVRanks(const Eigen::VectorXi& rank_lo,
+                    const Eigen::VectorXi& rank_hi);
+
+    /// Set per-MV cost rank [nu] (priority for economic optimization).
+    void setMVCostRanks(const Eigen::VectorXi& mv_cost_rank);
 
     // ---- Build QP constraints ----
 
@@ -47,19 +63,31 @@ public:
         Eigen::VectorXd lb;              // lower bounds
         Eigen::VectorXd ub;              // upper bounds
         int num_constraints;
-        std::vector<int> relaxed_priorities;  // which levels were relaxed
+        int n_du;                        // number of move variables (M*nu)
+        int n_slack;                     // number of slack variables (2*P*ny)
+        std::vector<int> relaxed_priorities;
     };
 
-    /// Build constraint matrices for the QP
-    /// u_current: current MV values [nu]
-    /// y_free: free response prediction [P*ny]
-    /// dynmat: dynamic matrix for output prediction
+    /// Build constraint matrices with soft CV bounds via slack variables.
+    /// Decision vector layout: [du (M*nu); s_lo (P*ny); s_hi (P*ny)]
+    ///
+    /// Constraints:
+    ///   du_min <= du <= du_max                              (M*nu rows, hard)
+    ///   u_min - u_current <= C*du <= u_max - u_current      (M*nu rows, hard)
+    ///   y_oper_lo - y_free <= A_dyn*du + s_lo               (P*ny rows, soft via s_lo)
+    ///   A_dyn*du - s_hi <= y_oper_hi - y_free               (P*ny rows, soft via s_hi)
+    ///   s_lo, s_hi >= 0                                     (2*P*ny rows, hard)
+    QPConstraints buildSoftQP(
+        const DynamicMatrix& dynmat,
+        const Eigen::VectorXd& u_current,
+        const Eigen::VectorXd& y_free) const;
+
+    /// Legacy: hard constraint build (used by tests).
     QPConstraints buildForQP(
         const DynamicMatrix& dynmat,
         const Eigen::VectorXd& u_current,
         const Eigen::VectorXd& y_free) const;
 
-    /// Build with feasibility check: relax lower priorities if infeasible
     QPConstraints buildWithRelaxation(
         const DynamicMatrix& dynmat,
         const Eigen::VectorXd& u_current,
@@ -72,6 +100,9 @@ public:
     void updateMVRateLimit(int mv_idx, double rate);
     void updateCVOperatingBound(int cv_idx, double lb, double ub);
     void updateCVSafetyBound(int cv_idx, double lb, double ub);
+    void updateCVConcern(int cv_idx, double concern_lo, double concern_hi);
+    void updateCVRank(int cv_idx, int rank_lo, int rank_hi);
+    void updateMVCostRank(int mv_idx, int rank);
 
     // ---- Query ----
 
@@ -84,20 +115,34 @@ public:
     FeasibilityReport checkFeasibility(
         const Eigen::VectorXd& u_current) const;
 
+    // ---- Raw accessors ----
+    const Eigen::VectorXd& mvLowerBound() const { return mv_lb_; }
+    const Eigen::VectorXd& mvUpperBound() const { return mv_ub_; }
+    const Eigen::VectorXd& cvOperLowerBound() const { return cv_oper_lb_; }
+    const Eigen::VectorXd& cvOperUpperBound() const { return cv_oper_ub_; }
+    const Eigen::VectorXd& cvConcernLo() const { return cv_concern_lo_; }
+    const Eigen::VectorXd& cvConcernHi() const { return cv_concern_hi_; }
+    const Eigen::VectorXi& cvRankLo() const { return cv_rank_lo_; }
+    const Eigen::VectorXi& cvRankHi() const { return cv_rank_hi_; }
+    const Eigen::VectorXi& mvCostRank() const { return mv_cost_rank_; }
+
+    int nu() const { return nu_; }
+    int ny() const { return ny_; }
+    int M() const { return M_; }
+    int P() const { return P_; }
+
 private:
     int nu_, ny_, M_, P_;
 
-    // P1: MV absolute bounds
     Eigen::VectorXd mv_lb_, mv_ub_;
-
-    // P2: MV rate bounds
     Eigen::VectorXd du_lb_, du_ub_;
-
-    // P3: CV safety bounds
     Eigen::VectorXd cv_safety_lb_, cv_safety_ub_;
-
-    // P4: CV operating bounds
     Eigen::VectorXd cv_oper_lb_, cv_oper_ub_;
+
+    // DMC3 soft constraint tuning
+    Eigen::VectorXd cv_concern_lo_, cv_concern_hi_;
+    Eigen::VectorXi cv_rank_lo_, cv_rank_hi_;
+    Eigen::VectorXi mv_cost_rank_;
 };
 
 }  // namespace azeoapc
