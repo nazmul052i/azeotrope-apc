@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} Trends - APC Manager{% endblock %}
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+{% endblock %}
+{% block body %}
+
+<div class="page-head">
+  <h1>{{ name }} - Trends</h1>
+  <div class="page-actions">
+    <a class="btn" href="/controllers/{{ key }}">Back to Live View</a>
+    <select id="window-select" onchange="reloadTrends()">
+      <option value="15">Last 15 min</option>
+      <option value="60" selected>Last 60 min</option>
+      <option value="240">Last 4 hours</option>
+      <option value="1440">Last 24 hours</option>
+    </select>
+  </div>
+</div>
+
+{% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
+
+<section id="trend-grid"></section>
+
+<script>
+const KEY = {{ key|tojson }};
+const CV_TAGS = {{ cv_tags|tojson }};
+const MV_TAGS = {{ mv_tags|tojson }};
+
+async function fetchTrend(kind, tag, windowMin) {
+  const url = `/api/trend/${KEY}/${kind}/${encodeURIComponent(tag)}?window_min=${windowMin}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`fetch ${url} -> ${r.status}`);
+  return await r.json();
+}
+
+// Pull theme colours from CSS variables (set in :root in manager.css)
+// so the Plotly chrome stays in lockstep with the rest of the app.
+const _CSS = getComputedStyle(document.documentElement);
+const _C = name => _CSS.getPropertyValue(name).trim();
+const THEME = {
+  paper:    _C('--apc-bg-secondary'),
+  plot:     _C('--apc-plot-bg'),
+  text:     _C('--apc-text-secondary'),
+  grid:     _C('--apc-plot-grid'),
+};
+
+function plotPanel(divId, title, color, points) {
+  const xs = points.map(p => new Date(p.ts));
+  const ys = points.map(p => p.value);
+  Plotly.newPlot(divId, [{
+    x: xs, y: ys, type: 'scattergl', mode: 'lines',
+    line: {color: color, width: 1.5},
+    hoverinfo: 'x+y',
+  }], {
+    title: {text: title, font: {size: 12, color: THEME.text}},
+    paper_bgcolor: THEME.paper,
+    plot_bgcolor: THEME.plot,
+    font: {family: 'Segoe UI', size: 10, color: THEME.text},
+    margin: {l: 50, r: 16, t: 28, b: 32},
+    height: 220,
+    xaxis: {gridcolor: THEME.grid},
+    yaxis: {gridcolor: THEME.grid},
+  }, {displayModeBar: false, responsive: true});
+}
+
+async function reloadTrends() {
+  const win = document.getElementById('window-select').value;
+  const grid = document.getElementById('trend-grid');
+  grid.innerHTML = '';
+  const cvDiv = document.createElement('div');
+  cvDiv.innerHTML = '<h2>Controlled Variables</h2>';
+  grid.appendChild(cvDiv);
+  for (let i = 0; i < CV_TAGS.length; i++) {
+    const tag = CV_TAGS[i];
+    const id = `cv-${i}`;
+    const d = document.createElement('div');
+    d.id = id;
+    d.className = 'panel';
+    cvDiv.appendChild(d);
+    try {
+      const data = await fetchTrend('cv', tag, win);
+      plotPanel(id, tag, '#3DDC84', data.samples);
+    } catch (e) {
+      d.textContent = `error: ${e.message}`;
+    }
+  }
+  const mvDiv = document.createElement('div');
+  mvDiv.innerHTML = '<h2>Manipulated Variables</h2>';
+  grid.appendChild(mvDiv);
+  for (let i = 0; i < MV_TAGS.length; i++) {
+    const tag = MV_TAGS[i];
+    const id = `mv-${i}`;
+    const d = document.createElement('div');
+    d.id = id;
+    d.className = 'panel';
+    mvDiv.appendChild(d);
+    try {
+      const data = await fetchTrend('mv', tag, win);
+      plotPanel(id, tag, '#4A9EFF', data.samples);
+    } catch (e) {
+      d.textContent = `error: ${e.message}`;
+    }
+  }
+}
+
+reloadTrends();
+setInterval(reloadTrends, 10000);
+</script>
+
+{% endblock %}

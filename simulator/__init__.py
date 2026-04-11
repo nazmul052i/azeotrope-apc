@@ -1,1 +1,0 @@
-"""Azeotrope APC Standalone Simulator."""

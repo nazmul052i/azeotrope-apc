@@ -25,11 +25,16 @@ dist/
 
 # SQLite databases
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 
 # HDF5 model files (generated)
 *.hdf5
+
+# apc_runtime / apc_historian output (per-run logs, snapshots, db)
+runs/
 
 # OS
 .DS_Store

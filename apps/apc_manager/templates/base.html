@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}APC Manager{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/manager.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">&#x25C6;</span>
+      <span class="brandtext">APC MANAGER</span>
+    </div>
+    <nav class="topnav">
+      <a href="/">Dashboard</a>
+      <a href="/controllers">Controllers</a>
+    </nav>
+    <div class="connstatus">
+      <span class="dot {% if runtime_ok %}ok{% else %}err{% endif %}"></span>
+      runtime
+      <span class="dot {% if historian_ok %}ok{% else %}err{% endif %}"></span>
+      historian
+    </div>
+  </header>
+
+  <main>
+    {% block body %}{% endblock %}
+  </main>
+
+  <footer>
+    <span>Azeotrope APC &middot; v0.1.0</span>
+  </footer>
+</body>
+</html>

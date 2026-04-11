@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} Tuning - APC Manager{% endblock %}
+{% block body %}
+
+<div class="page-head">
+  <h1>{{ name }} - Tuning</h1>
+  <div class="page-actions">
+    <a class="btn" href="/controllers/{{ key }}">Back to Live View</a>
+  </div>
+</div>
+
+{% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
+{% if message %}<div class="success-banner">{{ message }}</div>{% endif %}
+
+<h2>CV Setpoints + Limits</h2>
+{% for cv in cvs %}
+<form class="tune-form" method="POST" action="/controllers/{{ key }}/tune-cv">
+  <input type="hidden" name="cv_tag" value="{{ cv.tag }}">
+  <div class="row">
+    <span class="tag">{{ cv.tag }}</span>
+    <span class="cur">cur: {{ "%.4g"|format(cv.value) }}</span>
+    <label>SP <input type="number" step="any" name="setpoint" value="{{ cv.setpoint }}"></label>
+    <label>Lo <input type="number" step="any" name="lo_limit"
+                     value="{{ cv.lo_limit if cv.lo_limit is not none else '' }}"></label>
+    <label>Hi <input type="number" step="any" name="hi_limit"
+                     value="{{ cv.hi_limit if cv.hi_limit is not none else '' }}"></label>
+    <button class="btn primary" type="submit">Apply</button>
+  </div>
+</form>
+{% endfor %}
+
+<h2>MV Limits + Move Suppression</h2>
+{% for mv in mvs %}
+<form class="tune-form" method="POST" action="/controllers/{{ key }}/tune-mv">
+  <input type="hidden" name="mv_tag" value="{{ mv.tag }}">
+  <div class="row">
+    <span class="tag">{{ mv.tag }}</span>
+    <span class="cur">cur: {{ "%.4g"|format(mv.value) }}</span>
+    <label>Lo <input type="number" step="any" name="lo_limit"
+                     value="{{ mv.lo_limit if mv.lo_limit is not none else '' }}"></label>
+    <label>Hi <input type="number" step="any" name="hi_limit"
+                     value="{{ mv.hi_limit if mv.hi_limit is not none else '' }}"></label>
+    <label>MoveSupp <input type="number" step="any" name="move_suppress"
+                            value="{{ mv.move_suppress }}"></label>
+    <button class="btn primary" type="submit">Apply</button>
+  </div>
+</form>
+{% endfor %}
+
+{% endblock %}

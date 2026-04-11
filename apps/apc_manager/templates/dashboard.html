@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - APC Manager{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="5">{% endblock %}
+{% block body %}
+
+<h1>Dashboard</h1>
+
+{% if error %}
+  <div class="error-banner">{{ error }}</div>
+{% endif %}
+
+<section class="grid controllers">
+  {% for c in controllers %}
+    {% set st = c.status or "UNKNOWN" %}
+    <div class="card status-{{ st|lower }}">
+      <div class="card-head">
+        <h2><a href="/controllers/{{ c.key }}">{{ c.name or c.key }}</a></h2>
+        <span class="badge badge-{{ st|lower }}">{{ st }}</span>
+      </div>
+      <div class="card-body">
+        <div class="kv"><span>Cycle</span><strong>{{ c.cycle }}</strong></div>
+        <div class="kv"><span>Cycle ms</span><strong>{{ "%.1f"|format(c.last_cycle_ms or 0) }}</strong></div>
+        <div class="kv"><span>Avg ms</span><strong>{{ "%.1f"|format(c.avg_cycle_ms or 0) }}</strong></div>
+        <div class="kv"><span>CV/MV/DV</span><strong>{{ c.n_cv }}/{{ c.n_mv }}/{{ c.n_dv }}</strong></div>
+        {% if c.last_error %}
+          <div class="errline">{{ c.last_error }}</div>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="empty">No controllers loaded.</div>
+  {% endfor %}
+</section>
+
+<p class="subtle">Auto-refreshes every 5 seconds.</p>
+
+{% endblock %}

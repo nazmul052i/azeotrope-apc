@@ -26,10 +26,57 @@ dev = [
     "pytest>=7.0",
     "pytest-cov",
 ]
-builder = [
+architect = [
     "PySide6>=6.5",
-    "plotly>=5.0",
+    "pyqtgraph>=0.13",
+    "asyncua>=1.0",
 ]
+ident = [
+    "PySide6>=6.5",
+    "pyqtgraph>=0.13",
+    "pandas>=1.5",
+]
+runtime = [
+    "asyncua>=1.0",
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+]
+historian = [
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+]
+manager = [
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+    "jinja2>=3.0",
+    "python-multipart>=0.0.5",
+]
+launcher = [
+    "PySide6>=6.5",
+]
+
+[project.scripts]
+# `pip install -e .` then run these from anywhere.
+apc-launcher  = "apc_launcher.app:main"
+apc-architect = "apc_architect.app:main"
+apc-ident     = "apc_ident.app:main"
+apc-runtime   = "apc_runtime.app:main"
+apc-historian = "apc_historian.app:main"
+apc-manager   = "apc_manager.app:main"
 
 [tool.scikit-build]
 cmake.build-type = "Release"
+wheel.packages = [
+    "packages/azeoapc",
+    "apps/apc_launcher",
+    "apps/apc_architect",
+    "apps/apc_ident",
+    "apps/apc_runtime",
+    "apps/apc_historian",
+    "apps/apc_manager",
+]
+
+[tool.pytest.ini_options]
+# Tests live next to the code; add packages/ and apps/ to the import path
+# so they resolve without needing a pip install.
+pythonpath = ["packages", "apps"]

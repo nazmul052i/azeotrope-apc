@@ -1,0 +1,117 @@
+##############################################################################
+# CSTR Nonlinear MPC Simulation
+#
+# Reactor with 3 states (concentration, temperature, level) and 2 MVs.
+# Demonstrates Layer 3 RTO using CasADi/IPOPT for economic optimization.
+##############################################################################
+
+controller:
+  name: "CSTR Nonlinear MPC"
+  description: "Continuous stirred tank reactor with three-layer MPC"
+  sample_time: 0.5    # minutes
+
+model:
+  type: nonlinear
+  module: "cstr_model.py"
+  function: "cstr_ode"
+  nx: 3            # states: c, T, h
+  nu: 2            # inputs: Tc, F
+  nd: 1            # disturbances: F0
+  ny: 2            # outputs: c, h (we measure concentration and level)
+  output_indices: [0, 2]   # which states are CVs
+
+  steady_state:
+    x0: [0.878, 324.5, 0.659]   # c, T, h at SS
+    u0: [300.0, 0.1]            # Tc, F at SS
+    d0: [0.1]                    # F0 at SS
+    y0: [0.878, 0.659]           # c, h at SS
+
+optimizer:
+  prediction_horizon: 30
+  control_horizon: 5
+  model_horizon: 60
+  observer_gain: 0.85
+
+layer3:
+  enabled: true
+  execution_interval_sec: 60.0   # run RTO every minute (= 2 sample periods)
+  max_iter: 500
+  tolerance: 1.0e-6
+
+manipulated_variables:
+  - tag: "TI-101.SP"
+    name: "Coolant Temp Setpoint"
+    units: "K"
+    steady_state: 300.0
+    limits:
+      validity: [200, 400]
+      engineering: [250, 350]
+      operating: [255, 345]
+    rate_limit: 10.0
+    move_suppress: 0.01
+    cost: 0.0
+    plot_lo: 250
+    plot_hi: 350
+
+  - tag: "FIC-101.SP"
+    name: "Outlet Flow Setpoint"
+    units: "kL/min"
+    steady_state: 0.1
+    limits:
+      validity: [0, 0.5]
+      engineering: [0, 0.3]
+      operating: [0.01, 0.29]
+    rate_limit: 0.05
+    move_suppress: 100.0
+    cost: 0.0
+    plot_lo: 0
+    plot_hi: 0.3
+
+controlled_variables:
+  - tag: "AI-101.PV"
+    name: "Concentration A"
+    units: "mol/L"
+    steady_state: 0.878
+    setpoint: 0.878
+    limits:
+      validity: [0, 2]
+      engineering: [0, 1.4]
+      operating: [0.05, 1.35]
+      safety: [0, 1.4]
+    weight: 100.0
+    priority: 4
+    noise: 0.001
+    plot_lo: 0
+    plot_hi: 1.4
+
+  - tag: "LIC-101.PV"
+    name: "Liquid Level"
+    units: "m"
+    steady_state: 0.659
+    setpoint: 0.659
+    limits:
+      validity: [0, 2]
+      engineering: [0, 1]
+      operating: [0.05, 0.95]
+      safety: [0, 1]
+    weight: 50.0
+    priority: 4
+    noise: 0.005
+    plot_lo: 0
+    plot_hi: 1
+
+disturbance_variables:
+  - tag: "FI-100.PV"
+    name: "Inlet Flow"
+    units: "kL/min"
+    steady_state: 0.1
+    limits:
+      validity: [0, 0.5]
+      engineering: [0, 0.3]
+    plot_lo: 0
+    plot_hi: 0.3
+
+display:
+  history_length: 200
+  refresh_ms: 100
+  plot_layout: auto

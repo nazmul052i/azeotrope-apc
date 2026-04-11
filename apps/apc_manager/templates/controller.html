@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} - APC Manager{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="5"></meta>{% endblock %}
+{% block body %}
+
+<div class="page-head">
+  <h1>{{ name }}</h1>
+  <span class="badge badge-{{ status|lower }}">{{ status }}</span>
+  <div class="page-actions">
+    <a class="btn" href="/controllers/{{ key }}/trends">Trends</a>
+    <a class="btn" href="/controllers/{{ key }}/tuning">Tuning</a>
+    <form method="POST" action="/controllers/{{ key }}/pause" style="display:inline">
+      <button class="btn">Pause</button>
+    </form>
+    <form method="POST" action="/controllers/{{ key }}/resume" style="display:inline">
+      <button class="btn">Resume</button>
+    </form>
+  </div>
+</div>
+
+{% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
+
+<section class="metrics-row">
+  <div class="metric"><span>Cycle</span><strong>{{ status_obj.cycle }}</strong></div>
+  <div class="metric"><span>Cycle time</span><strong>{{ "%.1f"|format(status_obj.last_cycle_ms or 0) }} ms</strong></div>
+  <div class="metric"><span>Avg time</span><strong>{{ "%.1f"|format(status_obj.avg_cycle_ms or 0) }} ms</strong></div>
+  <div class="metric"><span>Total cycles</span><strong>{{ status_obj.total_cycles }}</strong></div>
+  {% if kpi %}
+    <div class="metric"><span>Cycles/min</span><strong>{{ kpi.cycles_per_minute }}</strong></div>
+    <div class="metric"><span>Error %</span><strong>{{ kpi.error_pct }}</strong></div>
+  {% endif %}
+</section>
+
+<h2>CVs</h2>
+<table class="data">
+  <thead><tr>
+    <th>Tag</th><th>Value</th><th>Setpoint</th><th>Error</th>
+    <th>Lo Limit</th><th>Hi Limit</th><th>On Control</th>
+  </tr></thead>
+  <tbody>
+    {% for cv in cvs %}
+      {% set kpi_cv = kpi_cvs.get(cv.tag) %}
+      <tr>
+        <td class="tag">{{ cv.tag }}</td>
+        <td>{{ "%.4g"|format(cv.value) }}</td>
+        <td>{{ "%.4g"|format(cv.setpoint) }}</td>
+        <td class="{{ 'red' if cv.error|abs > 1 else '' }}">{{ "%+.4g"|format(cv.error) }}</td>
+        <td>{{ "%.4g"|format(cv.lo_limit) if cv.lo_limit is not none else "-" }}</td>
+        <td>{{ "%.4g"|format(cv.hi_limit) if cv.hi_limit is not none else "-" }}</td>
+        <td>{% if kpi_cv %}{{ kpi_cv.on_control_pct }}%{% else %}-{% endif %}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>MVs</h2>
+<table class="data">
+  <thead><tr>
+    <th>Tag</th><th>Value</th><th>du</th>
+    <th>Lo Limit</th><th>Hi Limit</th><th>At Lo</th><th>At Hi</th>
+  </tr></thead>
+  <tbody>
+    {% for mv in mvs %}
+      <tr>
+        <td class="tag">{{ mv.tag }}</td>
+        <td>{{ "%.4g"|format(mv.value) }}</td>
+        <td>{{ "%+.4g"|format(mv.du) }}</td>
+        <td>{{ "%.4g"|format(mv.lo_limit) if mv.lo_limit is not none else "-" }}</td>
+        <td>{{ "%.4g"|format(mv.hi_limit) if mv.hi_limit is not none else "-" }}</td>
+        <td>{% if mv.at_lo %}<span class="pill red">LO</span>{% endif %}</td>
+        <td>{% if mv.at_hi %}<span class="pill red">HI</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if dvs %}
+<h2>DVs</h2>
+<table class="data">
+  <thead><tr><th>Tag</th><th>Value</th></tr></thead>
+  <tbody>
+    {% for dv in dvs %}
+      <tr><td class="tag">{{ dv.tag }}</td><td>{{ "%.4g"|format(dv.value) }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<p class="subtle">Auto-refreshes every 5 seconds.</p>
+
+{% endblock %}
