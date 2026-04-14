@@ -437,17 +437,24 @@ class MainWindow(QMainWindow):
         # ── Help ──
         help_menu = menubar.addMenu("&Help")
 
+        help_act = QAction("&Help Topics (F1)", self)
+        help_act.setShortcut("F1")
+        help_act.triggered.connect(self._on_help)
+        help_menu.addAction(help_act)
+
+        theory_act = QAction("Identification &Theory", self)
+        theory_act.triggered.connect(lambda: self._show_help("theory_fir"))
+        help_menu.addAction(theory_act)
+
+        ss_theory_act = QAction("&Subspace Theory", self)
+        ss_theory_act.triggered.connect(lambda: self._show_help("theory_subspace"))
+        help_menu.addAction(ss_theory_act)
+
+        help_menu.addSeparator()
+
         about_act = QAction("&About APC Ident", self)
         about_act.triggered.connect(self._on_about)
         help_menu.addAction(about_act)
-
-        try:
-            from azeoapc.theme.help_menu import build_help_menu
-            build_help_menu(menubar, "ident", self,
-                             include_mpc_theory=False,
-                             include_ident_theory=True)
-        except Exception:
-            pass  # help_menu module may not exist yet
 
     # ------------------------------------------------------------------
     def _rebuild_recent_menu(self):
@@ -634,6 +641,21 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(
                 self, "Report", f"Failed:\n{e}")
+
+    def _on_help(self):
+        """F1 context-sensitive help."""
+        from .help_viewer import show_help, context_help_for_step
+        # Determine current step
+        idx = self.stack.currentIndex()
+        reverse = {v: k for k, v in _STEP_INDEX.items()}
+        step_id = reverse.get(idx, "data")
+        topic = context_help_for_step(step_id)
+        show_help(self, topic)
+
+    def _show_help(self, topic: str):
+        """Show help for a specific topic."""
+        from .help_viewer import show_help
+        show_help(self, topic)
 
     def _on_about(self):
         """Show about dialog."""
