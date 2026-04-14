@@ -1,9 +1,7 @@
-"""APC Architect main window.
+"""APC Architect main window -- modern sidebar layout.
 
-Top-level QMainWindow with five tabs (Configuration / Optimization /
-Calculations / Simulation / Deployment) and a File menu that owns project
-lifecycle: New, Open Project, Open Recent, Save, Save As, plus dirty
-tracking and a save-on-close prompt.
+Uses sidebar navigation matching the APC Ident style, with ISA-101
+Silver theme and workflow wizard steps.
 """
 from __future__ import annotations
 
@@ -16,7 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
-    QTabWidget, QVBoxLayout, QWidget,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from azeoapc.models.config_loader import (
@@ -28,20 +26,19 @@ from .configuration_window import ConfigurationWindow
 from .deployment_window import DeploymentWindow
 from .optimizer_window import OptimizerWindow
 from .recent_files import RecentFiles
+from .backstage import BackstageScreen
+from .sidebar import ArchitectSidebar
 from .whatif_window import WhatIfSimulator, _STYLE
 
-
-_TAB_DEFS = [
-    ("configuration", "  \u2630  Configuration  "),
-    ("optimizer",     "  \u2699  Optimization  "),
-    ("calculations",  "  \u0192  Calculations  "),
-    ("simulator",     "  \u25B6  Simulation  "),
-    ("deployment",    "  \u26A1  Deployment  "),
-]
+# Step ID -> stack index
+_STEP_INDEX = {
+    "config": 0, "optimize": 1, "calculate": 2,
+    "simulate": 3, "deploy": 4,
+}
 
 
 class MainWindow(QMainWindow):
-    """Top-level window with five tabs and a File menu owning project lifecycle."""
+    """Top-level window with sidebar navigation and stacked content."""
 
     def __init__(self, config: Optional[SimConfig] = None, parent=None):
         super().__init__(parent)
@@ -51,12 +48,9 @@ class MainWindow(QMainWindow):
         self._recent = RecentFiles(max_entries=10)
 
         self.setMinimumSize(1500, 900)
-        # Theme is installed at the QApplication level by app.py via
-        # azeoapc.theme.apply_theme; the named-button overrides from
-        # whatif's _STYLE are appended there too. No per-window
-        # setStyleSheet needed.
+        self.setAcceptDrops(True)
 
-        # Tab widget references created in _build_tabs
+        # Panel references created in _build_tabs
         self.configuration: Optional[QWidget] = None
         self.optimizer: Optional[QWidget] = None
         self.calculations: Optional[QWidget] = None
@@ -74,77 +68,116 @@ class MainWindow(QMainWindow):
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        root = QHBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        root.addWidget(self._build_header())
+        # Sidebar
+        self.sidebar = ArchitectSidebar()
+        self.sidebar.step_clicked.connect(self._on_sidebar_step)
+        self.sidebar.context_requested.connect(self._show_step_context_menu)
+        root.addWidget(self.sidebar)
 
-        self.outer_tabs = QTabWidget()
-        self.outer_tabs.setStyleSheet("""
-        QTabWidget::pane {
-            border: none;
-            background: #ECECEC;
-        }
-        QTabBar::tab {
-            background: #D8D8D8;
-            color: #404040;
-            border: none;
-            padding: 10px 32px;
-            margin-right: 1px;
-            font-size: 11pt;
-            font-weight: 600;
-            min-width: 140px;
-        }
-        QTabBar::tab:selected {
-            background: #0066CC;
-            color: white;
-            border-bottom: 3px solid #0066CC;
-        }
-        QTabBar::tab:hover:!selected {
-            background: #E4E4E4;
-            color: #1A1A1A;
-        }
-        """)
-        root.addWidget(self.outer_tabs, 1)
+        # Stacked content
+        self.stack = QStackedWidget()
+        root.addWidget(self.stack, 1)
+
+        # Backwards compat alias
+        self.outer_tabs = self.stack
+
+        self.statusBar().showMessage("Ready")
 
     # ------------------------------------------------------------------
-    def _build_header(self):
-        header = QWidget()
-        header.setFixedHeight(38)
-        header.setStyleSheet(
-            "background: #ECECEC; border-bottom: 1px solid #B0B0B0;")
-        lay = QHBoxLayout(header)
-        lay.setContentsMargins(14, 0, 14, 0)
-        lay.setSpacing(10)
+    def _on_sidebar_step(self, step_id: str):
+        self._navigate_to(step_id)
 
-        icon = QLabel("\u25C6")
-        icon.setStyleSheet("color: #0066CC; font-size: 18pt; font-weight: bold;")
-        lay.addWidget(icon)
+    def _on_backstage_action(self, action_id: str):
+        """Handle actions from the backstage landing screen."""
+        if action_id == "new":
+            self._on_new_project()
+        elif action_id == "open":
+            self._on_open_project()
+        elif action_id == "import":
+            self._on_import_bundle()
+        elif action_id.startswith("template_"):
+            template_name = action_id.replace("template_", "").upper()
+            self._new_from_template(template_name)
+        else:
+            self.statusBar().showMessage(f"Unknown action: {action_id}")
 
-        brand = QLabel("APC ARCHITECT")
-        brand.setStyleSheet(
-            "color: #1A1A1A; font-size: 12pt; font-weight: 600; "
-            "letter-spacing: 1px;")
-        lay.addWidget(brand)
+    def _new_from_template(self, template_name: str):
+        """Create a new project from a process template."""
+        try:
+            from azeoapc.identification.process_templates import get_template
+            template = get_template(template_name)
+            # Create a new config and apply template settings
+            cfg = SimConfig(name=f"{template.name} Controller")
+            cfg.sample_time = template.suggested_dt
+            self.cfg = cfg
+            self._project_path = None
+            self._build_tabs(cfg)
+            self._mark_dirty()
+            self.statusBar().showMessage(
+                f"New project from {template.name} template", 3000)
+        except Exception as e:
+            QMessageBox.warning(self, "Template",
+                                f"Failed to load template:\n{e}")
 
-        sep = QLabel("|")
-        sep.setStyleSheet("color: #B0B0B0; font-size: 14pt;")
-        lay.addWidget(sep)
+    def _navigate_to(self, step_id: str):
+        idx = _STEP_INDEX.get(step_id, 0)
+        self._navigate_to_index(idx)
 
-        self.sim_label = QLabel(
-            self.cfg.name if self.cfg else "No project loaded")
-        self.sim_label.setStyleSheet(
-            "color: #404040; font-size: 10pt; font-weight: 500;")
-        lay.addWidget(self.sim_label)
+    def _navigate_to_index(self, idx: int):
+        if idx < self.stack.count():
+            self.stack.setCurrentIndex(idx)
+            reverse = {v: k for k, v in _STEP_INDEX.items()}
+            step_id = reverse.get(idx, "config")
+            self.sidebar.set_current(step_id)
+            self.statusBar().showMessage(
+                f"{step_id.title()} | "
+                f"{self.cfg.name if self.cfg else 'No project'}")
 
-        lay.addStretch()
+    def _show_step_context_menu(self, step_id: str, global_pos):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background: #EBECF1; color: #1A1C24; "
+            "border: 1px solid #9AA5B4; }"
+            "QMenu::item { padding: 5px 24px 5px 12px; }"
+            "QMenu::item:selected { background: #2B5EA7; color: white; }"
+            "QMenu::separator { height: 1px; background: #C8CDD8; margin: 4px 8px; }")
 
-        version = QLabel("v0.1.0")
-        version.setStyleSheet("color: #707070; font-size: 8pt;")
-        lay.addWidget(version)
+        if step_id == "config":
+            menu.addAction("Import Model Bundle...").triggered.connect(
+                self._on_import_bundle)
+            menu.addSeparator()
+            menu.addAction("Add MV...").triggered.connect(
+                lambda: self.statusBar().showMessage("Add MV from config tab"))
+            menu.addAction("Add CV...").triggered.connect(
+                lambda: self.statusBar().showMessage("Add CV from config tab"))
+        elif step_id == "optimize":
+            menu.addAction("Auto-Tune Layer 1").triggered.connect(
+                lambda: self.optimizer.layer1_page._auto_tune()
+                if self.optimizer and hasattr(self.optimizer, 'layer1_page') else None)
+            menu.addAction("Apply to Simulator").triggered.connect(
+                lambda: self.optimizer._apply()
+                if self.optimizer and hasattr(self.optimizer, '_apply') else None)
+        elif step_id == "simulate":
+            menu.addAction("Step Simulation").triggered.connect(
+                lambda: self.simulator._step_simulation()
+                if self.simulator and hasattr(self.simulator, '_step_simulation') else None)
+            menu.addAction("Reset Simulation").triggered.connect(
+                lambda: self.simulator._init_engine()
+                if self.simulator and hasattr(self.simulator, '_init_engine') else None)
+        elif step_id == "deploy":
+            menu.addAction("Connect OPC UA...").triggered.connect(
+                lambda: self.deployment._on_connect_clicked()
+                if self.deployment and hasattr(self.deployment, '_on_connect_clicked') else None)
+            menu.addAction("Deploy Controller").triggered.connect(
+                lambda: self.deployment._on_deploy_clicked()
+                if self.deployment and hasattr(self.deployment, '_on_deploy_clicked') else None)
 
-        return header
+        if menu.actions():
+            menu.exec(global_pos)
 
     # ==================================================================
     # Menu
@@ -219,14 +252,22 @@ class MainWindow(QMainWindow):
         ]):
             act = QAction(label, self)
             act.setShortcut(shortcut)
-            act.triggered.connect(lambda _=False, idx=i: self.outer_tabs.setCurrentIndex(idx))
+            act.triggered.connect(lambda _=False, idx=i: self._navigate_to_index(idx))
             view_menu.addAction(act)
 
         # ── Help ──
-        from azeoapc.theme.help_menu import build_help_menu
-        build_help_menu(menubar, "architect", self,
-                         include_mpc_theory=True,
-                         include_ident_theory=False)
+        help_menu = menubar.addMenu("&Help")
+
+        help_act = QAction("&Help Topics (F1)", self)
+        help_act.setShortcut("F1")
+        help_act.triggered.connect(self._on_help)
+        help_menu.addAction(help_act)
+
+        help_menu.addSeparator()
+
+        about_act = QAction("&About APC Architect", self)
+        about_act.triggered.connect(self._on_about)
+        help_menu.addAction(about_act)
 
     # ------------------------------------------------------------------
     def _rebuild_recent_menu(self):
@@ -254,22 +295,25 @@ class MainWindow(QMainWindow):
     # Tab construction (used by both __init__ and project open/new)
     # ==================================================================
     def _build_tabs(self, cfg: Optional[SimConfig]):
-        """Build the five sub-tabs from a (possibly None) SimConfig.
-
-        Tears down any prior deployment runtime first so we don't leak
-        OPC UA threads when reloading.
-        """
-        # Tear down existing tabs / runtime
+        """Build the five panels from a (possibly None) SimConfig."""
+        # Tear down existing
         if self.deployment is not None and hasattr(self.deployment, "shutdown"):
             try:
                 self.deployment.shutdown()
             except Exception:
                 pass
-        self.outer_tabs.clear()
+        while self.stack.count():
+            w = self.stack.widget(0)
+            self.stack.removeWidget(w)
+            w.deleteLater()
 
         if cfg is None:
-            for _, label in _TAB_DEFS:
-                self.outer_tabs.addTab(QWidget(), label)
+            # Show backstage landing screen
+            backstage = BackstageScreen(
+                recent_paths=self._recent.get())
+            backstage.action_triggered.connect(self._on_backstage_action)
+            backstage.recent_opened.connect(self._open_path)
+            self.stack.addWidget(backstage)
             self.configuration = self.optimizer = self.calculations = None
             self.simulator = self.deployment = None
             return
@@ -277,7 +321,6 @@ class MainWindow(QMainWindow):
         self.configuration = ConfigurationWindow(cfg)
         self.optimizer = OptimizerWindow(cfg)
         self.simulator = WhatIfSimulator(cfg)
-        # Calculations + Deployment need the live engine from the simulator
         self.calculations = CalculationsWindow(self.simulator.engine)
         self.deployment = DeploymentWindow(self.simulator.engine)
 
@@ -289,12 +332,20 @@ class MainWindow(QMainWindow):
         if hasattr(self.calculations, "config_changed"):
             self.calculations.config_changed.connect(self._mark_dirty)
 
-        self.outer_tabs.addTab(self.configuration, _TAB_DEFS[0][1])
-        self.outer_tabs.addTab(self.optimizer,     _TAB_DEFS[1][1])
-        self.outer_tabs.addTab(self.calculations,  _TAB_DEFS[2][1])
-        self.outer_tabs.addTab(self.simulator,     _TAB_DEFS[3][1])
-        self.outer_tabs.addTab(self.deployment,    _TAB_DEFS[4][1])
-        self.outer_tabs.setCurrentIndex(0)
+        # Add to stacked widget (order matches _STEP_INDEX)
+        self.stack.addWidget(self.configuration)  # 0
+        self.stack.addWidget(self.optimizer)       # 1
+        self.stack.addWidget(self.calculations)    # 2
+        self.stack.addWidget(self.simulator)       # 3
+        self.stack.addWidget(self.deployment)      # 4
+        self.stack.setCurrentIndex(0)
+        self.sidebar.set_current("config")
+
+        # Show model file in sidebar if available
+        if hasattr(cfg, '_raw_yaml') and cfg._raw_yaml:
+            model = cfg._raw_yaml.get("model", {})
+            if isinstance(model, dict) and model.get("source"):
+                self.sidebar.set_file("config", model["source"])
 
     # ==================================================================
     # Dirty tracking + window title
@@ -320,12 +371,37 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"APC Architect -- {name}{marker} -- {base}")
         else:
             self.setWindowTitle(f"APC Architect -- {name}{marker} (unsaved)")
-        if hasattr(self, "sim_label"):
-            self.sim_label.setText(name + marker)
+        # Status bar shows project name
+        self.statusBar().showMessage(f"{name}{marker}")
 
     # ==================================================================
     # File menu handlers
     # ==================================================================
+    def _on_help(self):
+        from .help_viewer import show_architect_help, context_help_for_step
+        idx = self.stack.currentIndex()
+        reverse = {v: k for k, v in _STEP_INDEX.items()}
+        step_id = reverse.get(idx, "config")
+        topic = context_help_for_step(step_id)
+        show_architect_help(self, topic)
+
+    def _on_about(self):
+        QMessageBox.about(
+            self, "About APC Architect",
+            "<h2>Azeotrope APC Architect</h2>"
+            "<p>Version 0.2.0</p>"
+            "<p>Controller configuration, tuning, simulation, and "
+            "deployment studio for Advanced Process Control.</p>"
+            "<p>Features:</p>"
+            "<ul>"
+            "<li>3-layer optimization (QP + LP + NLP)</li>"
+            "<li>DMC3-style what-if simulator</li>"
+            "<li>Python calculation scripting</li>"
+            "<li>OPC UA deployment runtime</li>"
+            "<li>Process templates & recipes</li>"
+            "</ul>"
+            "<p>&copy; 2026 Azeotrope Process Control</p>")
+
     def _on_new_project(self):
         if not self._prompt_save_if_dirty():
             return
@@ -631,7 +707,7 @@ class MainWindow(QMainWindow):
         if self.configuration is not None and hasattr(self.configuration, "refresh"):
             self.configuration.refresh()
         # Auto-switch to Simulation so user can immediately test
-        self.outer_tabs.setCurrentIndex(3)
+        self._navigate_to("simulate")
 
     # ==================================================================
     # Window lifecycle
@@ -670,4 +746,4 @@ class MainWindow(QMainWindow):
             self.optimizer.layer3_page.show_rto_result(result)
         if hasattr(self.optimizer, "layer_tabs"):
             self.optimizer.layer_tabs.setCurrentIndex(0)
-        self.outer_tabs.setCurrentIndex(0)
+        self._navigate_to("optimize")

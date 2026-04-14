@@ -9,7 +9,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from azeoapc.models.config_loader import load_config
-from azeoapc.theme import apply_theme, set_window_icon
+from azeoapc.theme.ident_theme import get_qss
 
 from .main_window import MainWindow
 from .whatif_window import _STYLE
@@ -17,12 +17,13 @@ from .whatif_window import _STYLE
 
 def main():
     app = QApplication(sys.argv)
-    # Install the canonical DeltaV Live Silver chrome FIRST so every
-    # widget downstream picks it up. The whatif _STYLE block adds
-    # only the named-button overrides on top.
-    apply_theme(app)
-    set_window_icon(app, "architect")
-    app.setStyleSheet(app.styleSheet() + "\n" + _STYLE)
+    # ISA-101 Silver theme + whatif button overrides
+    app.setStyleSheet(get_qss() + "\n" + _STYLE)
+    try:
+        from azeoapc.theme import set_window_icon
+        set_window_icon(app, "architect")
+    except Exception:
+        pass
     app.setApplicationName("APC Architect")
     app.setOrganizationName("Azeotrope")
 

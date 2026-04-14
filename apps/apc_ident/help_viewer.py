@@ -28,15 +28,31 @@ _CONTEXT_HELP = {
     "validate": "validation_tab",
 }
 
+# Lazy diagram import
+def _diagram(name: str) -> str:
+    try:
+        from .help_diagrams import get_diagram
+        return get_diagram(name)
+    except Exception:
+        return ""
+
+
 # Help topics with inline content (used when markdown files aren't available)
 _HELP_TOPICS = {
     "welcome": {
         "title": "Welcome to APC Ident",
-        "html": """
+        "html": lambda: f"""
         <h2>APC Ident -- Model Identification Studio</h2>
         <p>APC Ident is an industrial-grade model identification tool for
         Advanced Process Control (MPC). It identifies dynamic models from
         step-test data for use in DMC-style controllers.</p>
+
+        <h3>Identification Workflow</h3>
+        {_diagram("ident_workflow")}
+
+        <h3>Three-Layer MPC Architecture</h3>
+        <p>The identified model feeds into a three-layer controller:</p>
+        {_diagram("three_layer")}
 
         <h3>Workflow</h3>
         <ol>
@@ -74,8 +90,11 @@ _HELP_TOPICS = {
     },
     "data_tab": {
         "title": "Data Tab",
-        "html": """
+        "html": lambda: f"""
         <h2>Data Tab -- Trend Workspace</h2>
+
+        <h3>Data Conditioning Pipeline</h3>
+        {_diagram("conditioning")}
 
         <h3>Loading Data</h3>
         <p>Right-click <b>Data</b> in the sidebar and select <b>Load CSV/Parquet</b>,
@@ -255,8 +274,10 @@ _HELP_TOPICS = {
     },
     "theory_fir": {
         "title": "FIR Identification Theory",
-        "html": """
+        "html": lambda: f"""
         <h2>Finite Impulse Response (FIR) Identification</h2>
+
+        {_diagram("fir_model")}
 
         <h3>The Model</h3>
         <p>A MIMO FIR model relates inputs u to outputs y through a sequence of
@@ -285,8 +306,10 @@ _HELP_TOPICS = {
     },
     "theory_subspace": {
         "title": "Subspace Identification Theory",
-        "html": """
+        "html": lambda: f"""
         <h2>Subspace State-Space Identification</h2>
+
+        {_diagram("subspace")}
 
         <h3>The Model</h3>
         <pre>x(k+1) = A·x(k) + B·u(k)
@@ -401,7 +424,10 @@ class HelpViewer(QDialog):
         # Fall back to inline content
         topic = _HELP_TOPICS.get(topic_id)
         if topic:
-            self.browser.setHtml(self._wrap_html(topic["html"]))
+            html = topic["html"]
+            if callable(html):
+                html = html()
+            self.browser.setHtml(self._wrap_html(html))
         else:
             self.browser.setHtml(self._wrap_html(
                 f"<h2>Topic not found: {topic_id}</h2>"
