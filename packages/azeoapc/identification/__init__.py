@@ -170,6 +170,11 @@ from .batch_execution import (
     generate_miso_cases, run_batch, auto_generate_batch,
 )
 
+# --- Closed-loop identification ---
+from .closed_loop_ident import (
+    ClosedLoopConfig, ClosedLoopMethod, closed_loop_identify,
+)
+
 # --- CV grouping ---
 from .cv_grouping import (
     CVGroup, auto_group_cvs, one_per_group, all_in_one_group,
