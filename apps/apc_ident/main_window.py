@@ -132,6 +132,8 @@ class MainWindow(QMainWindow):
                 lambda: self._ctx_load_data())
             menu.addAction("Import DMC Vectors (.vec)...").triggered.connect(
                 lambda: self._ctx_import_vec())
+            menu.addAction("OPC UA Data Acquisition...").triggered.connect(
+                lambda: self._open_opc_ua_dialog())
             menu.addAction("Reload Data").triggered.connect(
                 lambda: self.data_tab._on_reload() if self.data_tab else None)
             menu.addSeparator()
@@ -287,6 +289,32 @@ class MainWindow(QMainWindow):
                 subprocess.Popen(["xdg-open", os.path.dirname(filepath)])
         except Exception as e:
             QMessageBox.warning(self, "Reveal", f"Could not open:\n{e}")
+
+    def _open_opc_ua_dialog(self):
+        """Open OPC UA data acquisition dialog."""
+        from .opc_ua_dialog import OpcUaDialog
+        dlg = OpcUaDialog(self)
+        dlg.data_collected.connect(self._on_opc_data_collected)
+        dlg.exec()
+
+    def _on_opc_data_collected(self, df, save_path: str):
+        """Handle data from OPC UA collection."""
+        if df is None or len(df) == 0:
+            return
+        # Store as session data
+        self.session.df = df
+        self.session.df_path = save_path or "(OPC UA live collection)"
+        if self.data_tab:
+            if save_path:
+                self.data_tab._loaded_files.append(save_path)
+            else:
+                self.data_tab._loaded_files.append("(OPC UA)")
+            self.data_tab._refresh_from_session()
+            self.data_tab.data_loaded.emit()
+            self.data_tab.config_changed.emit()
+        self._update_sidebar_file()
+        self.statusBar().showMessage(
+            f"OPC UA: {len(df)} samples, {len(df.columns)} tags", 5000)
 
     def _ctx_load_data(self):
         start_dir = self.data_tab._examples_dir() if self.data_tab else ""

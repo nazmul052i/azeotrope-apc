@@ -170,6 +170,12 @@ from .batch_execution import (
     generate_miso_cases, run_batch, auto_generate_batch,
 )
 
+# --- CV grouping ---
+from .cv_grouping import (
+    CVGroup, auto_group_cvs, one_per_group, all_in_one_group,
+    identify_grouped, combine_grouped_results,
+)
+
 # --- Constrained identification ---
 from .constrained_ident import (
     GainConstraint, DeadTimeConstraint, GainRatioConstraint,
