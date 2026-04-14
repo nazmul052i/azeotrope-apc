@@ -2001,6 +2001,18 @@ while minimizing prediction error.
 > known physics. Do not over-constrain -- you might force the model
 > to fit your expectations rather than the data.
 
+> **Common Mistake: Over-Constraining the Model**
+>
+> Adding too many constraints can force the model away from what
+> the data actually shows. For example, if you constrain a gain to
+> be positive but the data clearly shows a negative relationship,
+> the constrained solver will produce a poor fit for that CV. Before
+> adding a constraint, make sure your engineering knowledge is correct
+> -- sometimes the process behaves differently than expected. A good
+> practice is to add constraints one at a time and check the R-squared
+> after each addition. If R-squared drops significantly, reconsider
+> that constraint.
+
 ### Closed-Loop Identification
 
 Sometimes you cannot perform an open-loop step test because:
@@ -2027,10 +2039,31 @@ setpoints of the existing controller in a staggered pattern). This
 gives the IV method the instrument it needs to break the feedback
 correlation.
 
+**Planning a closed-loop step test:**
+
+1. Do NOT turn off the existing controller.
+2. Instead, make step changes to the controller's setpoints.
+3. Move one setpoint at a time, waiting for the process to settle
+   between moves (just like an open-loop test, but on setpoints
+   instead of valve outputs).
+4. Record both the setpoint (r), the controller output (u/MV),
+   and the process variable (y/CV).
+5. Use the setpoint column as the instrumental variable when running
+   closed-loop identification.
+
 **Usage:**
 
 In the Identify tab, select "Closed-Loop" as the identification mode.
 Choose the method, provide setpoint columns if using IV, and run.
+
+> **Tip: Closed-Loop Models Are Noisier**
+>
+> Closed-loop identification inherently produces noisier models than
+> open-loop identification because the feedback signal partially
+> masks the plant dynamics. Expect lower R-squared values and wider
+> confidence bands. If possible, always prefer an open-loop step
+> test. Use closed-loop identification only when operational
+> constraints prevent taking the controller offline.
 
 ### Calculated Vectors (Derived Variables)
 
@@ -2049,6 +2082,21 @@ that are computed from existing CSV columns:
 3. The calculated column is added to the dataframe and appears in the
    tag browser.
 4. Assign it a role (CV or DV) and include it in identification.
+
+**Example calculated vectors for the cumene heater:**
+
+- **Combustion efficiency** = (TIT-402.PV - TIT-412.PV) / TIT-402.PV
+  -- ratio of useful heat to total heat, could be a CV
+- **Excess air ratio** = XI-490.PV / AIT-410.PV -- if these are
+  related, a ratio might be more controllable
+
+> **Tip: Keep Calculated Vectors Simple**
+>
+> Complex formulas with multiple operations are harder to interpret
+> in the step response matrix. Each calculated vector adds another
+> row or column to the model. Only add calculated vectors that
+> represent a physically meaningful quantity that you actually want
+> to control or monitor.
 
 ### Process Templates
 
@@ -2080,6 +2128,28 @@ Each template provides:
 
 When creating a new project, select a template to pre-populate the
 configuration. Then adjust to match your specific process.
+
+For the cumene heater, the **HEATER** template would be appropriate:
+
+```
+HEATER template defaults:
+  MVs: Fuel valve, Air damper, Stack damper
+  CVs: Outlet temp, Bridgewall temp, Coil temp, O2, Draft, CO
+  Suggested n_coeff: 60 (typical heater settling: 30-60 min)
+  Suggested dt: 60 seconds (1-minute sampling)
+  Suggested method: DLS
+  Notes: Watch for ramp behavior on temperatures if heat
+         exchanger has large thermal mass. CO analyzer typically
+         has high noise -- consider Ridge method for that CV.
+```
+
+> **Tip: Templates Are Starting Points, Not Final Answers**
+>
+> Always review and adjust template settings based on your specific
+> process. A template for a generic heater may suggest n_coeff=60,
+> but your particular heater may have slower dynamics requiring
+> n_coeff=90. Use Smart Config after applying the template to
+> fine-tune based on your actual data.
 
 ### OPC UA Data Acquisition
 
@@ -2167,6 +2237,22 @@ identifying a column with a level CV, you would set that CV to Ramp.
 
 Smart Config can auto-detect ramp and pseudoramp CVs based on their
 statistical properties (large drift relative to variance).
+
+**How to tell if a CV is integrating:**
+
+Look at the step response curve after identification:
+- **Normal CV:** The curve rises (or falls) and then levels off to a
+  flat steady-state value. The final few coefficients are approximately
+  constant.
+- **Ramp CV:** The curve keeps rising (or falling) linearly without
+  leveling off. The final coefficients show a constant upward slope.
+- **Pseudoramp CV:** The curve appears to be leveling off, but
+  extremely slowly. It is still changing at the end of the model
+  horizon, but the rate of change is decreasing.
+
+If you see a ramp-like curve for a CV that you identified as Normal,
+switch it to Ramp and re-identify. The model should then capture the
+integrating behavior correctly.
 
 > **Tip: If In Doubt, Try Normal First**
 >
