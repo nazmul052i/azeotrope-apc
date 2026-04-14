@@ -10,14 +10,19 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from azeoapc.identification import load_ident_project
-from azeoapc.theme import apply_theme
+from azeoapc.theme.ident_theme import get_qss
 
 from .main_window import MainWindow
 
 
 def main():
     app = QApplication(sys.argv)
-    apply_theme(app)
+    app.setStyleSheet(get_qss())
+    try:
+        from azeoapc.theme import set_window_icon
+        set_window_icon(app, "ident")
+    except Exception:
+        pass
     app.setApplicationName("APC Ident")
     app.setOrganizationName("Azeotrope")
 

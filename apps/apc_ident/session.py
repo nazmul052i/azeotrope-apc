@@ -22,6 +22,7 @@ import pandas as pd
 from azeoapc.identification import (
     ConditioningResult, IdentProject, IdentResult, ModelBundle,
 )
+from azeoapc.identification.multi_trial import TrialComparison
 
 
 @dataclass
@@ -40,6 +41,9 @@ class IdentSession:
     # Most recent identification (Identification tab populates,
     # Results + Validation read)
     ident_result: Optional[IdentResult] = None
+
+    # Multi-trial comparison (all trials, not just the best)
+    trial_comparison: Optional[TrialComparison] = None
 
     # In-memory bundle (Results tab populates on Export, Validation reads)
     bundle: Optional[ModelBundle] = None
@@ -64,4 +68,5 @@ class IdentSession:
         self.df_path = None
         self.cond_result = None
         self.ident_result = None
+        self.trial_comparison = None
         self.bundle = None

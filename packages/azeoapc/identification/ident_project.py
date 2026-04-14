@@ -80,6 +80,19 @@ class IdentProject:
     # Last exported bundle (the canonical handoff to apc_architect)
     last_bundle_path: str = ""
 
+    # --- Extended state (added for commercial completeness) ---
+    # Identification engine: "fir" or "subspace"
+    ident_engine: str = "fir"
+
+    # Per-CV type overrides: column_name -> "none" | "ramp" | "pseudoramp"
+    cv_types: Dict[str, str] = field(default_factory=dict)
+
+    # Calculated vectors: list of {name, expression, unit}
+    calculated_vectors: List[Dict[str, str]] = field(default_factory=list)
+
+    # Subspace config (if engine == "subspace")
+    subspace_config: Dict[str, Any] = field(default_factory=dict)
+
     # Bookkeeping (not persisted under "project:")
     source_path: Optional[str] = None    # absolute path the .apcident was loaded from
 
@@ -127,6 +140,11 @@ def save_ident_project(p: IdentProject, path: str) -> None:
         "identification": _ident_to_dict(p.ident),
         "last_bundle_path": _rebase_for_save(p.last_bundle_path,
                                               p.source_path, abs_path),
+        # Extended state
+        "ident_engine": p.ident_engine,
+        "cv_types": dict(p.cv_types) if p.cv_types else {},
+        "calculated_vectors": list(p.calculated_vectors),
+        "subspace_config": dict(p.subspace_config) if p.subspace_config else {},
     }
 
     with open(abs_path, "w", encoding="utf-8") as f:
@@ -165,6 +183,12 @@ def load_ident_project(path: str) -> IdentProject:
     p.conditioning = _conditioning_from_dict(raw.get("conditioning", {}) or {})
     p.ident = _ident_from_dict(raw.get("identification", {}) or {})
     p.last_bundle_path = raw.get("last_bundle_path", "") or ""
+
+    # Extended state (backwards-compatible: missing keys use defaults)
+    p.ident_engine = raw.get("ident_engine", "fir") or "fir"
+    p.cv_types = dict(raw.get("cv_types", {}) or {})
+    p.calculated_vectors = list(raw.get("calculated_vectors", []) or [])
+    p.subspace_config = dict(raw.get("subspace_config", {}) or {})
 
     return p
 

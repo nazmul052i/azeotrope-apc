@@ -57,6 +57,8 @@ import numpy as np
 
 from .control_model import ControlModel, from_fir
 from .fir_ident import IdentResult
+from .subspace_ident import SubspaceResult
+from .model_assembly import AssembledModel
 
 
 SCHEMA_VERSION = 1
@@ -150,7 +152,7 @@ class ModelBundle:
 # Build a bundle from an IdentResult
 # ---------------------------------------------------------------------------
 def bundle_from_ident(
-    result: IdentResult,
+    result,
     *,
     name: str,
     mv_tags: List[str],
@@ -161,12 +163,37 @@ def bundle_from_ident(
     era_order: Optional[int] = None,
     source_csv: str = "",
     source_project: str = "",
+    n_coeff: Optional[int] = None,
 ) -> ModelBundle:
-    """Convert an ``IdentResult`` into a self-contained ``ModelBundle``.
+    """Convert an ``IdentResult`` or ``SubspaceResult`` into a ``ModelBundle``.
 
-    Performs ERA reduction (default order = min(10, (n_coeff-1)//2)) so the
-    bundle ships with both FIR and a low-order state-space realisation.
+    Auto-detects the result type and dispatches accordingly.
+    For ``IdentResult``: performs ERA reduction (default order =
+    min(10, (n_coeff-1)//2)) so the bundle ships with both FIR and a
+    low-order state-space realisation.
+    For ``SubspaceResult``: uses the state-space matrices directly and
+    derives FIR/step response via Markov parameters.
+
+    Parameters
+    ----------
+    n_coeff : int, optional
+        Number of FIR coefficients.  Only used for SubspaceResult
+        (default 120).  Ignored for IdentResult (uses result.n_coeff).
     """
+    if isinstance(result, SubspaceResult):
+        return bundle_from_subspace(
+            result,
+            name=name,
+            mv_tags=mv_tags,
+            cv_tags=cv_tags,
+            dv_tags=dv_tags,
+            u0=u0,
+            y0=y0,
+            source_csv=source_csv,
+            source_project=source_project,
+            n_coeff=n_coeff or 120,
+        )
+    # Fall through to IdentResult handling
     if len(mv_tags) != result.nu:
         raise ValueError(
             f"mv_tags length {len(mv_tags)} != ident result nu={result.nu}")
@@ -272,6 +299,223 @@ def bundle_from_ident(
         source_csv=source_csv,
         source_project=source_project,
         fit_summary=fit_summary,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Build a bundle from a SubspaceResult
+# ---------------------------------------------------------------------------
+def bundle_from_subspace(
+    result: SubspaceResult,
+    *,
+    name: str,
+    mv_tags: List[str],
+    cv_tags: List[str],
+    dv_tags: Optional[List[str]] = None,
+    u0: Optional[np.ndarray] = None,
+    y0: Optional[np.ndarray] = None,
+    source_csv: str = "",
+    source_project: str = "",
+    n_coeff: int = 120,
+) -> ModelBundle:
+    """Convert a ``SubspaceResult`` into a self-contained ``ModelBundle``.
+
+    The subspace result already provides state-space matrices (A, B, C, D)
+    directly, so no ERA reduction is needed.  FIR and step-response
+    coefficients are derived from the Markov parameter sequence.
+
+    Parameters
+    ----------
+    n_coeff : int
+        Number of FIR / step-response coefficients to generate
+        (default 120).
+    """
+    if len(mv_tags) != result.nu:
+        raise ValueError(
+            f"mv_tags length {len(mv_tags)} != subspace result nu={result.nu}")
+    if len(cv_tags) != result.ny:
+        raise ValueError(
+            f"cv_tags length {len(cv_tags)} != subspace result ny={result.ny}")
+
+    ny, nu, nx = result.ny, result.nu, result.nx
+
+    # FIR from Markov parameters -> (ny, n_coeff, nu)
+    fir_list = result.to_fir(n_coeff)
+    fir_arr = np.zeros((ny, n_coeff, nu))
+    for k in range(n_coeff):
+        fir_arr[:, k, :] = fir_list[k]
+
+    # Cumulative step response -> (ny, n_coeff, nu)
+    step_list = result.to_step(n_coeff)
+    step_arr = np.zeros((ny, n_coeff, nu))
+    for k in range(n_coeff):
+        step_arr[:, k, :] = step_list[k]
+
+    gain = result.gain_matrix()
+
+    # Settling index from step response
+    settling = np.zeros((ny, nu), dtype=np.int32)
+    for i in range(ny):
+        for j in range(nu):
+            g_final = gain[i, j]
+            threshold = 0.02 * abs(g_final) if abs(g_final) > 1e-15 else 0.02
+            for k in range(n_coeff):
+                if abs(step_arr[i, k, j] - g_final) > threshold:
+                    settling[i, j] = k
+
+    # State-space matrices directly from subspace identification
+    A, B, C, D = result.A.copy(), result.B.copy(), result.C.copy(), result.D.copy()
+
+    # Default operating point: zeros (deviation-variable form)
+    if u0 is None:
+        u0 = np.zeros(nu)
+    if y0 is None:
+        y0 = np.zeros(ny)
+
+    # Fit summary from per-CV arrays
+    fit_summary: Dict[str, Any] = {
+        "condition_number": float(result.condition_number),
+        "is_stable": bool(result.is_stable),
+        "nx": int(nx),
+        "channels": [],
+    }
+    for i in range(ny):
+        entry: Dict[str, Any] = {
+            "cv": cv_tags[i],
+            "r_squared": float(result.fit_r2[i]),
+            "rmse": float(result.fit_rmse[i]),
+            "nrmse": float(result.fit_nrmse[i]),
+        }
+        fit_summary["channels"].append(entry)
+
+    return ModelBundle(
+        name=name,
+        dt=float(result.config.dt),
+        mv_tags=list(mv_tags),
+        cv_tags=list(cv_tags),
+        dv_tags=list(dv_tags or []),
+        fir=fir_arr,
+        confidence_lo=None,
+        confidence_hi=None,
+        step=step_arr,
+        gain_matrix=gain,
+        settling_index=settling,
+        A=A, B=B, C=C, D=D,
+        u0=np.asarray(u0, dtype=np.float64),
+        y0=np.asarray(y0, dtype=np.float64),
+        era_order=int(nx),
+        created=datetime.datetime.now().isoformat(timespec="seconds"),
+        ident_method=result.config.method.value,
+        ident_n_coeff=int(n_coeff),
+        ident_alpha=0.0,
+        ident_smoothing="",
+        source_csv=source_csv,
+        source_project=source_project,
+        fit_summary=fit_summary,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Build a bundle from an AssembledModel
+# ---------------------------------------------------------------------------
+def bundle_from_assembled(
+    assembled: AssembledModel,
+    *,
+    name: str,
+    dv_tags: Optional[List[str]] = None,
+    u0: Optional[np.ndarray] = None,
+    y0: Optional[np.ndarray] = None,
+    era_order: Optional[int] = None,
+    source_csv: str = "",
+    source_project: str = "",
+) -> ModelBundle:
+    """Convert an ``AssembledModel`` into a self-contained ``ModelBundle``.
+
+    The assembled model provides cumulative step-response coefficients.
+    FIR is computed as the first difference of the step response, and
+    ERA is used to obtain a state-space realisation.
+
+    Parameters
+    ----------
+    era_order : int, optional
+        Desired ERA order.  Defaults to min(10, (n_coeff-1)//2).
+    """
+    ny = len(assembled.cv_names)
+    nu = len(assembled.mv_names)
+    n_coeff = assembled.n_coeff
+
+    step_arr = assembled.step_response  # (ny, n_coeff, nu)
+    gain = assembled.gain_matrix        # (ny, nu)
+
+    # FIR = first difference of step response
+    fir_arr = np.zeros_like(step_arr)
+    fir_arr[:, 0, :] = step_arr[:, 0, :]
+    fir_arr[:, 1:, :] = np.diff(step_arr, axis=1)
+
+    # Settling index from step response
+    settling = np.zeros((ny, nu), dtype=np.int32)
+    for i in range(ny):
+        for j in range(nu):
+            g_final = gain[i, j]
+            threshold = 0.02 * abs(g_final) if abs(g_final) > 1e-15 else 0.02
+            for k in range(n_coeff):
+                if abs(step_arr[i, k, j] - g_final) > threshold:
+                    settling[i, j] = k
+
+    # ERA reduction for state-space realisation
+    fir_list = [fir_arr[:, k, :] for k in range(n_coeff)]
+    cm = from_fir(fir_list, dt=assembled.dt)
+    max_order = (n_coeff - 1) // 2
+    if era_order is None:
+        era_order = min(10, max_order)
+    era_order = max(1, min(era_order, max_order))
+
+    ss_model = None
+    actual_order = era_order
+    for try_order in range(era_order, 0, -1):
+        try:
+            cand = cm.to_ss_from_fir(method="era", order=try_order)
+            if cand.is_stable():
+                ss_model = cand
+                actual_order = try_order
+                break
+        except Exception:
+            continue
+    if ss_model is None:
+        ss_model = cm.to_ss_from_fir(method="era", order=era_order)
+        actual_order = era_order
+    era_order = actual_order
+    A, B, C, D = ss_model.ss
+
+    if u0 is None:
+        u0 = np.zeros(nu)
+    if y0 is None:
+        y0 = np.zeros(ny)
+
+    return ModelBundle(
+        name=name,
+        dt=float(assembled.dt),
+        mv_tags=list(assembled.mv_names),
+        cv_tags=list(assembled.cv_names),
+        dv_tags=list(dv_tags or []),
+        fir=fir_arr,
+        confidence_lo=None,
+        confidence_hi=None,
+        step=step_arr,
+        gain_matrix=gain,
+        settling_index=settling,
+        A=A, B=B, C=C, D=D,
+        u0=np.asarray(u0, dtype=np.float64),
+        y0=np.asarray(y0, dtype=np.float64),
+        era_order=int(era_order),
+        created=datetime.datetime.now().isoformat(timespec="seconds"),
+        ident_method="assembled",
+        ident_n_coeff=int(n_coeff),
+        ident_alpha=0.0,
+        ident_smoothing="",
+        source_csv=source_csv,
+        source_project=source_project,
+        fit_summary={},
     )
 
 

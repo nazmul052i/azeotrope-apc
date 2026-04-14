@@ -8,7 +8,9 @@ from .tags_tab import TagsTab
 from .identification_tab import IdentificationTab
 from .results_tab import ResultsTab
 from .validation_tab import ValidationTab
+from .analysis_tab import AnalysisTab
 
 __all__ = [
-    "DataTab", "TagsTab", "IdentificationTab", "ResultsTab", "ValidationTab",
+    "DataTab", "TagsTab", "IdentificationTab", "ResultsTab",
+    "ValidationTab", "AnalysisTab",
 ]

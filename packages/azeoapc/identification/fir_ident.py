@@ -429,7 +429,7 @@ class FIRIdentifier:
     # -----------------------------------------------------------------
     def _build_toeplitz(self, u: Mat, N: int, nu: int) -> Mat:
         """
-        Build the block-Toeplitz regression matrix Φ.
+        Build the block-Toeplitz regression matrix Φ (vectorized).
 
         Φ[t, :] = [u(t), u(t-1), ..., u(t-n_coeff+1)]  flattened across
         all nu inputs.  Shape: (N - n_coeff + 1, n_coeff * nu).
@@ -437,11 +437,13 @@ class FIRIdentifier:
         n = self.config.n_coeff
         n_rows = N - n + 1
 
+        # Build column indices for each lag, then slice in one shot
+        # Row t, lag k → u[t + n - 1 - k, :]
+        # For all t: indices are [n-1-k, n-k, ..., N-1-k]
         Phi = np.zeros((n_rows, n * nu))
-        for t in range(n_rows):
-            for k in range(n):
-                idx = t + n - 1 - k
-                Phi[t, k * nu : (k + 1) * nu] = u[idx, :]
+        for k in range(n):
+            start = n - 1 - k
+            Phi[:, k * nu : (k + 1) * nu] = u[start : start + n_rows, :]
 
         return Phi
 
@@ -498,7 +500,7 @@ class FIRIdentifier:
     # -----------------------------------------------------------------
     def _identify_cor(self, u: Mat, y: Mat) -> Tuple[Mat, Mat, float]:
         """
-        Correlation method: solve Ruu · θ = Ruy.
+        Correlation method: solve Ruu · θ = Ruy (vectorized).
 
         More robust to feedback than DLS, at the cost of statistical
         efficiency.
@@ -508,29 +510,26 @@ class FIRIdentifier:
         n = self.config.n_coeff
 
         # Build auto-correlation Ruu and cross-correlation Ruy
+        # Vectorized: for each lag pair, slice contiguous blocks and
+        # use matrix multiplication instead of sample-by-sample loops.
         Ruu = np.zeros((n * nu, n * nu))
         Ruy = np.zeros((n * nu, ny))
 
         for lag_i in range(n):
+            # Cross-correlation Ruy: u(t-lag_i) vs y(t) for t = lag_i..N-1
+            ui_block = u[0 : N - lag_i, :]      # u[t - lag_i] for t=lag_i..N-1
+            yt_block = y[lag_i : N, :]           # y[t] for t=lag_i..N-1
+            valid = N - lag_i
+            Ruy[lag_i * nu:(lag_i + 1) * nu, :] = (ui_block.T @ yt_block) / valid
+
             for lag_j in range(n):
-                # Ruu block (lag_i, lag_j)
+                # Auto-correlation Ruu: u(t-lag_i) vs u(t-lag_j)
                 max_lag = max(lag_i, lag_j)
                 valid = N - max_lag
-                for t in range(max_lag, N):
-                    ui = u[t - lag_i, :]
-                    uj = u[t - lag_j, :]
-                    Ruu[lag_i * nu:(lag_i + 1) * nu,
-                        lag_j * nu:(lag_j + 1) * nu] += np.outer(ui, uj)
+                ui = u[max_lag - lag_i : N - lag_i, :]  # u[t - lag_i]
+                uj = u[max_lag - lag_j : N - lag_j, :]  # u[t - lag_j]
                 Ruu[lag_i * nu:(lag_i + 1) * nu,
-                    lag_j * nu:(lag_j + 1) * nu] /= valid
-
-        for lag_i in range(n):
-            valid = N - lag_i
-            for t in range(lag_i, N):
-                ui = u[t - lag_i, :]
-                yt = y[t, :]
-                Ruy[lag_i * nu:(lag_i + 1) * nu, :] += np.outer(ui, yt)
-            Ruy[lag_i * nu:(lag_i + 1) * nu, :] /= valid
+                    lag_j * nu:(lag_j + 1) * nu] = (ui.T @ uj) / valid
 
         cond = np.linalg.cond(Ruu)
 
