@@ -10,7 +10,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from azeoapc.theme import apply_theme
+from azeoapc.theme import apply_theme, set_window_icon
 
 from .main_window import MainWindow
 
@@ -38,6 +38,7 @@ def main():
     app.setApplicationName("APC Launcher")
     app.setOrganizationName("Azeotrope")
     apply_theme(app)
+    set_window_icon(app, "launcher")
 
     window = MainWindow(repo_root=_find_repo_root())
     window.resize(1180, 760)

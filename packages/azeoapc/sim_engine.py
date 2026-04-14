@@ -72,8 +72,10 @@ class SimEngine:
         # User calculations runtime (input/output Python scripts)
         self.calc_runner = CalculationRunner(self)
 
-        if _HAS_CORE:
+        if _HAS_CORE and config.plant is not None:
             self._build_controller()
+        elif config.plant is None:
+            print("[SimEngine] WARNING: No plant model loaded. Running open-loop only.")
         else:
             print("[SimEngine] WARNING: C++ core not available. Running open-loop only.")
 
@@ -110,6 +112,9 @@ class SimEngine:
 
         # Build step response model from plant's state-space
         plant = cfg.plant
+        if plant is None:
+            print("[SimEngine] WARNING: No plant model -- controller not built.")
+            return
         if hasattr(plant, 'A'):
             model = core.StepResponseModel.from_state_space(
                 plant.A, plant.Bu, plant.C, plant.D, N, dt)
@@ -408,8 +413,10 @@ class SimEngine:
         # 0a. Run input calculations (BEFORE plant step / MPC)
         self.calc_runner.run_inputs()
 
-        # 1. Advance plant
-        self.y = self.plant.step(self.u, self.d)
+        # 1. Advance plant (skip if no plant model loaded)
+        if self.plant is not None:
+            self.y = self.plant.step(self.u, self.d)
+        # else: y stays at its current value (open-loop / no model)
 
         # Add measurement noise (gated by noise_enabled)
         if self.noise_enabled and self.noise_factor > 0:

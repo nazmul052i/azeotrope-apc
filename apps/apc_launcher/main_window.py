@@ -104,20 +104,24 @@ def _build_apps(repo_root: str) -> List[AppSpec]:
             ),
             launcher_script="architect.py",
         ),
-        # ── 3. Run the controller (auto-starts historian) ──
+        # ── 3. Run the controller (Aspen Watch Maker style desktop) ──
         AppSpec(
             key="runtime",
             title="APC Runtime",
             icon="\u26A1",   # ⚡
             color=PALETTE["accent_orange"],
             description=(
-                "Headless production controller cycle loop. Reads PVs over "
-                "OPC UA, runs the MPC, writes setpoints back. "
-                "Auto-starts the historian and forwards every cycle."
+                "Desktop controller manager (Aspen Watch Maker style). "
+                "Lists every loaded controller in a table with Start / "
+                "Stop / Pause actions. Auto-starts the historian "
+                "alongside so every cycle is forwarded into the store."
             ),
             launcher_script="runtime.py",
-            is_service=True,
-            service_url="http://127.0.0.1:8765",
+            # Runtime is now a desktop app (with REST + historian
+            # forwarding still running on a background thread inside
+            # the same process), so the launcher treats it like
+            # architect / ident: fire-and-forget, no Stop button.
+            is_service=False,
             needs_config=True,
             default_config=examples if os.path.exists(examples) else "",
         ),
@@ -367,13 +371,12 @@ class MainWindow(QMainWindow):
         self.repo_root = repo_root
         self.setWindowTitle("Azeotrope APC Launcher")
         self.setMinimumSize(1100, 720)
-        self.setStyleSheet(
-            f"QMainWindow, QWidget {{ background: {PALETTE['bg_primary']}; }}")
 
         # name -> (Popen, AppSpec, AppCard)
         self._procs: Dict[str, tuple] = {}
 
         self._build_ui()
+        self._build_help_menu()
 
         # Periodic poll to detect crashed children
         self._poll_timer = QTimer(self)
@@ -440,6 +443,13 @@ class MainWindow(QMainWindow):
             f"color: {PALETTE['text_dim']}; "
             f"border-top: 1px solid {PALETTE['border']}; }}")
         self.statusBar().showMessage("Ready")
+
+    # ------------------------------------------------------------------
+    def _build_help_menu(self):
+        from azeoapc.theme.help_menu import build_help_menu
+        build_help_menu(self.menuBar(), "launcher", self,
+                         include_mpc_theory=True,
+                         include_ident_theory=True)
 
     # ------------------------------------------------------------------
     def _build_header(self):
@@ -522,14 +532,14 @@ class MainWindow(QMainWindow):
         if spec.is_service:
             card.set_running(True)
             msg = f"{spec.title} started (PID {proc.pid})"
-            if spec.key == "runtime":
-                msg += "  -- forwarding cycles to historian"
             self.statusBar().showMessage(msg, 6000)
         else:
             # Desktop app: not tracked as 'running' since the user
             # owns the lifecycle. Brief status flash.
-            self.statusBar().showMessage(
-                f"{spec.title} launched (PID {proc.pid})", 5000)
+            msg = f"{spec.title} launched (PID {proc.pid})"
+            if spec.key == "runtime":
+                msg += "  --  historian started + cycles will forward"
+            self.statusBar().showMessage(msg, 6000)
             QTimer.singleShot(
                 2000, lambda key=spec.key: self._forget_proc(key))
 

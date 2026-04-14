@@ -187,6 +187,16 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        import_act = QAction("&Import Model Bundle...", self)
+        import_act.setShortcut("Ctrl+I")
+        import_act.setToolTip(
+            "Import an .apcmodel bundle exported by APC Ident. "
+            "This sets the plant model for the controller.")
+        import_act.triggered.connect(self._on_import_bundle)
+        file_menu.addAction(import_act)
+
+        file_menu.addSeparator()
+
         reveal_act = QAction("Re&veal in File Manager", self)
         reveal_act.triggered.connect(self._on_reveal)
         file_menu.addAction(reveal_act)
@@ -211,6 +221,12 @@ class MainWindow(QMainWindow):
             act.setShortcut(shortcut)
             act.triggered.connect(lambda _=False, idx=i: self.outer_tabs.setCurrentIndex(idx))
             view_menu.addAction(act)
+
+        # ── Help ──
+        from azeoapc.theme.help_menu import build_help_menu
+        build_help_menu(menubar, "architect", self,
+                         include_mpc_theory=True,
+                         include_ident_theory=False)
 
     # ------------------------------------------------------------------
     def _rebuild_recent_menu(self):
@@ -347,6 +363,12 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self, "Open Project", f"Failed to load project:\n{e}")
             return
+
+        # If the loaded name is still the default, derive from filename
+        if cfg.name in ("Untitled", "Untitled Project", ""):
+            stem = os.path.splitext(os.path.basename(path))[0]
+            cfg.name = stem.replace("_", " ").title()
+
         self.cfg = cfg
         self._project_path = cfg.source_path
         self._dirty = False
@@ -383,6 +405,11 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def _save_to(self, path: str):
+        # If the controller name is still the default, derive from filename
+        if self.cfg.name in ("Untitled", "Untitled Project", ""):
+            stem = os.path.splitext(os.path.basename(path))[0]
+            self.cfg.name = stem.replace("_", " ").title()
+
         try:
             save_config(self.cfg, path)
         except Exception as e:
@@ -395,6 +422,138 @@ class MainWindow(QMainWindow):
         self._recent.add(path)
         self._rebuild_recent_menu()
         self.statusBar().showMessage(f"Saved {os.path.basename(path)}", 3000)
+
+    # ------------------------------------------------------------------
+    def _on_import_bundle(self):
+        """Import an .apcmodel bundle exported by APC Ident.
+
+        Populates the SimConfig's plant model from the bundle's
+        state-space realization and — if the config has no MVs/CVs
+        yet — auto-creates variable entries from the bundle's tag
+        lists so the user lands on a fully-populated controller
+        instead of a blank screen.
+        """
+        if self.cfg is None:
+            QMessageBox.information(
+                self, "Import Bundle",
+                "Create or open a project first (File > New Project).")
+            return
+
+        start_dir = self._default_open_dir()
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Model Bundle", start_dir,
+            "APC Model Bundle (*.apcmodel);;All Files (*)")
+        if not path:
+            return
+
+        try:
+            from azeoapc.identification.model_bundle import load_model_bundle
+            bundle = load_model_bundle(path)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Import Bundle",
+                f"Failed to load bundle:\n{type(e).__name__}: {e}")
+            return
+
+        if bundle.A is None:
+            QMessageBox.warning(
+                self, "Import Bundle",
+                "This bundle has no state-space realization.\n"
+                "Re-export it from APC Ident with ERA enabled.")
+            return
+
+        import numpy as np
+        from azeoapc.models.variables import MV, CV, Limits
+        from azeoapc.models.plant import StateSpacePlant
+
+        # Auto-create MV/CV entries from the bundle's tag lists if
+        # the config doesn't have them yet.
+        if not self.cfg.mvs:
+            for i, tag in enumerate(bundle.mv_tags):
+                u0 = float(bundle.u0[i]) if bundle.u0 is not None and i < len(bundle.u0) else 0.0
+                self.cfg.mvs.append(MV(
+                    tag=tag, name=tag, units="",
+                    steady_state=u0,
+                    limits=Limits(),
+                    move_suppress=1.0,
+                ))
+        if not self.cfg.cvs:
+            for i, tag in enumerate(bundle.cv_tags):
+                y0 = float(bundle.y0[i]) if bundle.y0 is not None and i < len(bundle.y0) else 0.0
+                self.cfg.cvs.append(CV(
+                    tag=tag, name=tag, units="",
+                    steady_state=y0,
+                    setpoint=y0,
+                    limits=Limits(),
+                    weight=1.0,
+                ))
+
+        # Build the plant from the bundle's state-space matrices
+        nx = bundle.A.shape[0]
+        nu = bundle.B.shape[1]
+        ny = bundle.C.shape[0]
+        nd = max(len(self.cfg.dvs), 1)
+        Bd = np.zeros((nx, nd))
+
+        u0 = bundle.u0 if bundle.u0 is not None else np.array(
+            [mv.steady_state for mv in self.cfg.mvs])
+        y0 = bundle.y0 if bundle.y0 is not None else np.array(
+            [cv.steady_state for cv in self.cfg.cvs])
+        d0 = (np.array([dv.steady_state for dv in self.cfg.dvs])
+              if self.cfg.dvs else np.zeros(0))
+
+        self.cfg.plant = StateSpacePlant(
+            A=bundle.A, Bu=bundle.B, Bd=Bd, C=bundle.C, D=bundle.D,
+            x0=np.zeros(nx), u0=u0, d0=d0, y0=y0,
+            sample_time=self.cfg.sample_time,
+            continuous=False,
+        )
+
+        # Store the bundle path in _raw_yaml so save_config can
+        # round-trip the model section.
+        if self.cfg._raw_yaml is None:
+            self.cfg._raw_yaml = {}
+        # Make the source path relative to the project dir if possible
+        if self._project_path:
+            try:
+                rel = os.path.relpath(
+                    path, os.path.dirname(self._project_path)
+                ).replace("\\", "/")
+            except ValueError:
+                rel = path.replace("\\", "/")
+        else:
+            rel = os.path.abspath(path).replace("\\", "/")
+        self.cfg._raw_yaml["model"] = {
+            "type": "bundle",
+            "source": rel,
+        }
+
+        # Update the controller name from the bundle if still untitled
+        if self.cfg.name in ("Untitled", "Untitled Project", ""):
+            self.cfg.name = bundle.name or "Imported Controller"
+
+        # Rebuild all tabs with the new plant
+        self._build_tabs(self.cfg)
+        self._mark_dirty()
+        self._refresh_window_title()
+
+        self.statusBar().showMessage(
+            f"Imported model bundle: {os.path.basename(path)} "
+            f"({bundle.ny} CV x {bundle.nu} MV, nx={nx})",
+            6000)
+
+        QMessageBox.information(
+            self, "Import Bundle",
+            f"Model imported successfully.\n\n"
+            f"  Bundle: {bundle.name}\n"
+            f"  MVs: {', '.join(bundle.mv_tags)}\n"
+            f"  CVs: {', '.join(bundle.cv_tags)}\n"
+            f"  States: {nx}  (ERA order {bundle.era_order})\n\n"
+            f"The controller now has a plant model. You can:\n"
+            f"  - Configure limits in the Configuration tab\n"
+            f"  - Tune the optimizer in the Optimization tab\n"
+            f"  - Run a what-if simulation in the Simulation tab\n"
+            f"  - Save the project (File > Save As)")
 
     # ------------------------------------------------------------------
     def _on_reveal(self):

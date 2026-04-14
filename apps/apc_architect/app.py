@@ -9,7 +9,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 from azeoapc.models.config_loader import load_config
-from azeoapc.theme import apply_theme
+from azeoapc.theme import apply_theme, set_window_icon
 
 from .main_window import MainWindow
 from .whatif_window import _STYLE
@@ -21,6 +21,7 @@ def main():
     # widget downstream picks it up. The whatif _STYLE block adds
     # only the named-button overrides on top.
     apply_theme(app)
+    set_window_icon(app, "architect")
     app.setStyleSheet(app.styleSheet() + "\n" + _STYLE)
     app.setApplicationName("APC Architect")
     app.setOrganizationName("Azeotrope")

@@ -698,10 +698,171 @@ class SubcontrollersView(QWidget):
 
 
 # ============================================================================
+# Variables View (editable MV / CV / DV properties)
+# ============================================================================
+class VariablesView(QWidget):
+    """Editable table of all MVs, CVs, and DVs.
+
+    The user can edit: tag, name, description, units, steady_state,
+    engineering limits (lo/hi), operating limits (lo/hi), and — for
+    CVs — setpoint and weight. Changes write directly back into the
+    SimConfig objects.
+    """
+
+    changed = Signal()
+
+    def __init__(self, config: SimConfig, parent=None):
+        super().__init__(parent)
+        self.cfg = config
+        self._build()
+        self.refresh()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(10)
+
+        header = QLabel("Variable Properties")
+        header.setStyleSheet(f"font-size: 14pt; font-weight: 600; color: {_CLR_PRIMARY};")
+        root.addWidget(header)
+
+        intro = QLabel(
+            "Edit tag names, descriptions, units, steady-state values, and "
+            "limits for every MV, CV, and DV. Changes are applied immediately "
+            "to the controller configuration."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #707070; font-size: 9pt; padding: 4px 0;")
+        root.addWidget(intro)
+
+        self.table = QTableWidget()
+        self.table.setStyleSheet(_TABLE_STYLE)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+
+        _cols = [
+            "Type", "Tag", "Name", "Description", "Units",
+            "Steady State", "Eng Lo", "Eng Hi", "Op Lo", "Op Hi",
+            "Setpoint", "Weight",
+        ]
+        self.table.setColumnCount(len(_cols))
+        self.table.setHorizontalHeaderLabels(_cols)
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.Interactive)
+        hh.setSectionResizeMode(2, QHeaderView.Interactive)
+        hh.setSectionResizeMode(3, QHeaderView.Stretch)
+        for c in range(4, len(_cols)):
+            hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+
+        self.table.cellChanged.connect(self._on_cell_changed)
+        root.addWidget(self.table, 1)
+
+    def refresh(self):
+        self.table.blockSignals(True)
+        rows = []
+        for mv in self.cfg.mvs:
+            rows.append(("MV", mv))
+        for cv in self.cfg.cvs:
+            rows.append(("CV", cv))
+        for dv in self.cfg.dvs:
+            rows.append(("DV", dv))
+
+        self.table.setRowCount(len(rows))
+        self._rows = rows
+
+        for r, (typ, var) in enumerate(rows):
+            # Type (read-only, colored)
+            type_item = QTableWidgetItem(typ)
+            type_item.setFlags(type_item.flags() & ~Qt.ItemIsEditable)
+            type_colors = {"MV": "#0066CC", "CV": "#2E8B57", "DV": "#D9822B"}
+            type_item.setForeground(QColor(type_colors.get(typ, "#707070")))
+            type_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            self.table.setItem(r, 0, type_item)
+
+            # Tag
+            self.table.setItem(r, 1, QTableWidgetItem(var.tag))
+            # Name
+            self.table.setItem(r, 2, QTableWidgetItem(var.name))
+            # Description (MV/CV only — DVs may not have one)
+            desc = ""
+            self.table.setItem(r, 3, QTableWidgetItem(desc))
+            # Units
+            self.table.setItem(r, 4, QTableWidgetItem(var.units))
+            # Steady state
+            self.table.setItem(r, 5, QTableWidgetItem(f"{var.steady_state:g}"))
+
+            # Limits
+            lim = var.limits
+            self.table.setItem(r, 6, QTableWidgetItem(
+                f"{lim.engineering_lo:g}" if lim.engineering_lo > -1e19 else ""))
+            self.table.setItem(r, 7, QTableWidgetItem(
+                f"{lim.engineering_hi:g}" if lim.engineering_hi < 1e19 else ""))
+            self.table.setItem(r, 8, QTableWidgetItem(
+                f"{lim.operating_lo:g}" if lim.operating_lo > -1e19 else ""))
+            self.table.setItem(r, 9, QTableWidgetItem(
+                f"{lim.operating_hi:g}" if lim.operating_hi < 1e19 else ""))
+
+            # Setpoint + weight (CV only)
+            if typ == "CV":
+                self.table.setItem(r, 10, QTableWidgetItem(f"{var.setpoint:g}"))
+                self.table.setItem(r, 11, QTableWidgetItem(f"{var.weight:g}"))
+            else:
+                sp_item = QTableWidgetItem("")
+                sp_item.setFlags(sp_item.flags() & ~Qt.ItemIsEditable)
+                sp_item.setBackground(QColor("#F0F0F0"))
+                self.table.setItem(r, 10, sp_item)
+                wt_item = QTableWidgetItem("")
+                wt_item.setFlags(wt_item.flags() & ~Qt.ItemIsEditable)
+                wt_item.setBackground(QColor("#F0F0F0"))
+                self.table.setItem(r, 11, wt_item)
+
+            # Color editable cells
+            for c in range(1, 10):
+                item = self.table.item(r, c)
+                if item is not None:
+                    item.setBackground(_CLR_EDITABLE)
+
+        self.table.blockSignals(False)
+
+    def _on_cell_changed(self, row: int, col: int):
+        if row >= len(self._rows):
+            return
+        typ, var = self._rows[row]
+        text = self.table.item(row, col).text().strip()
+
+        try:
+            if col == 1:
+                var.tag = text
+            elif col == 2:
+                var.name = text
+            elif col == 4:
+                var.units = text
+            elif col == 5 and text:
+                var.steady_state = float(text)
+            elif col == 6 and text:
+                var.limits.engineering_lo = float(text)
+            elif col == 7 and text:
+                var.limits.engineering_hi = float(text)
+            elif col == 8 and text:
+                var.limits.operating_lo = float(text)
+            elif col == 9 and text:
+                var.limits.operating_hi = float(text)
+            elif col == 10 and typ == "CV" and text:
+                var.setpoint = float(text)
+            elif col == 11 and typ == "CV" and text:
+                var.weight = float(text)
+        except (ValueError, AttributeError):
+            self.refresh()
+            return
+        self.changed.emit()
+
+
+# ============================================================================
 # Main Configuration Window
 # ============================================================================
 class ConfigurationWindow(QWidget):
-    """Top-level Configuration tab with three sub-tabs."""
+    """Top-level Configuration tab with four sub-tabs."""
 
     config_changed = Signal()
 
@@ -742,14 +903,17 @@ class ConfigurationWindow(QWidget):
         """)
 
         self.summary_view = SummaryView(self.cfg)
+        self.variables_view = VariablesView(self.cfg)
         self.filters_view = FeedbackFiltersView(self.cfg)
         self.subs_view = SubcontrollersView(self.cfg)
 
         self.tabs.addTab(self.summary_view, "  Summary  ")
+        self.tabs.addTab(self.variables_view, "  Variables  ")
         self.tabs.addTab(self.filters_view, "  Feedback Filters  ")
         self.tabs.addTab(self.subs_view, "  Subcontrollers  ")
 
         # Refresh summary when other views change
+        self.variables_view.changed.connect(self._on_changed)
         self.filters_view.changed.connect(self._on_changed)
         self.subs_view.changed.connect(self._on_changed)
 
@@ -762,5 +926,6 @@ class ConfigurationWindow(QWidget):
 
     def refresh(self):
         self.summary_view.refresh()
+        self.variables_view.refresh()
         self.filters_view.refresh()
         self.subs_view.refresh()

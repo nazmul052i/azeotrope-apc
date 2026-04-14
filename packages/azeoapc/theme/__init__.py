@@ -34,6 +34,7 @@ JSON / CSS / Qt stylesheet templates without an enum dance.
 """
 from __future__ import annotations
 
+import os
 from typing import Dict, Iterable
 
 
@@ -390,3 +391,30 @@ def css_variables_block(prefix: str = "--apc") -> str:
 
 def palette_keys() -> Iterable[str]:
     return SILVER.keys()
+
+
+# ---------------------------------------------------------------------------
+# Window icons
+# ---------------------------------------------------------------------------
+_ICONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+
+
+def icon_path(app_name: str) -> str:
+    """Return the absolute path to an app's window icon PNG.
+
+    ``app_name`` is one of: launcher, architect, ident, runtime,
+    historian, manager. Falls back gracefully if the file is missing.
+    """
+    return os.path.join(_ICONS_DIR, f"{app_name}.png")
+
+
+def set_window_icon(qapplication, app_name: str) -> None:
+    """Install the app's window icon on the QApplication.
+
+    Call after ``apply_theme(app)`` in each app's ``main()``.
+    The icon shows in the taskbar, title bar, and Alt+Tab list.
+    """
+    path = icon_path(app_name)
+    if os.path.exists(path):
+        from PySide6.QtGui import QIcon
+        qapplication.setWindowIcon(QIcon(path))
